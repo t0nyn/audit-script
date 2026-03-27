@@ -60,11 +60,13 @@ def is_dependency_file(path: str) -> bool:
         return True
     return False
 
-COPY_ADD_RE = re.compile(
-    r"^\s*(?:COPY|ADD)\s+(?:--\S+\s+)*(.+?)\s+(\S+)\s*$",
+COPY_RE = re.compile(r"^\s*COPY\b", re.IGNORECASE)
+ADD_RE = re.compile(
+    r"^\s*ADD\s+(?:--\S+\s+)*(.+?)\s+(\S+)\s*$",
     re.IGNORECASE,
 )
-REDIRECT_RE = re.compile(r"(?:>>?|tee\s+)\s*([^\s;|&><]+)")
+# Use negative lookahead (?!=) to avoid matching >= (version specifiers like pip install "pkg>=1.0")
+REDIRECT_RE = re.compile(r"(?:>>?(?!=)|tee\s+)\s*([^\s;|&><]+)")
 TOUCH_RE = re.compile(r"\btouch\s+((?:[^\s;|&><]+\s*)+)")
 
 violations = []
@@ -81,16 +83,19 @@ while i < len(lines):
             break
         logical = logical[:-1] + " " + lines[i].rstrip()
 
-    m = COPY_ADD_RE.match(logical)
-    if m:
+    # Flag any COPY command
+    if COPY_RE.match(logical):
+        violations.append(f"Line {i+1}: COPY command detected")
+    # Check ADD for non-dependency files
+    elif ADD_RE.match(logical):
         tokens = [t for t in logical.split()[1:] if not t.startswith("--")]
         if len(tokens) >= 2:
             for src in tokens[:-1]:
                 src_base = src.rstrip("/").split("/")[-1]
                 if src_base in (".", "..") or src.endswith("/"):
-                    violations.append(f"Line {i+1}: COPY/ADD copies entire directory '{src}' (may include non-dependency files)")
+                    violations.append(f"Line {i+1}: ADD copies entire directory '{src}' (may include non-dependency files)")
                 elif not is_dependency_file(src_base):
-                    violations.append(f"Line {i+1}: COPY/ADD copies non-dependency file '{src}'")
+                    violations.append(f"Line {i+1}: ADD copies non-dependency file '{src}'")
     elif re.match(r"^\s*RUN\b", logical, re.IGNORECASE):
         shell_part = re.sub(r"^\s*RUN\s+", "", logical, flags=re.IGNORECASE)
         
